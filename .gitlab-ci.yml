@@ -1,0 +1,45 @@
+stages:
+    - deploy
+
+.deploy-base:
+  stage: deploy
+  script:
+    # ensure that the logging ns is created
+    - kubectl create ns logging > /dev/null 2>&1 || kubectl get ns logging > /dev/null 2>&1
+    # Install FluentBit for logging and configure it to send logs to Azure Log Analytics
+    # FluentBit has precreated RBAC yaml files for us, provides read-only access
+    - kubectl apply -f https://raw.githubusercontent.com/fluent/fluent-bit-kubernetes-logging/master/fluent-bit-service-account.yaml
+    - kubectl apply -f https://raw.githubusercontent.com/fluent/fluent-bit-kubernetes-logging/master/fluent-bit-role-1.22.yaml
+    - kubectl apply -f https://raw.githubusercontent.com/fluent/fluent-bit-kubernetes-logging/master/fluent-bit-role-binding-1.22.yaml
+    # In the Terraform files we create an Azure Log Analytics Workspace, we require the Workspace ID & Key to tell
+    # FluentBit where to send the logs exactly
+    - kubectl create secret generic azure-loganalytics --from-literal=WorkSpaceID=$FLUENT_AZURE_WORKSPACE_ID --from-literal=WorkspaceKey=$FLUENT_AZURE_WORKSPACE_KEY --namespace logging || true
+    # Set the Workspace ID & Key in the config map
+    - sed -i 's@$FLUENT_AZURE_WORKSPACE_ID@'"$FLUENT_AZURE_WORKSPACE_ID"'@g' fluent-bit-cm.yaml
+    - sed -i 's@$FLUENT_AZURE_WORKSPACE_KEY@'"$FLUENT_AZURE_WORKSPACE_KEY"'@g' fluent-bit-cm.yaml
+
+    - kubectl apply -f ./fluent-bit-cm.yaml
+    - kubectl apply -f fluent-bit-ds.yaml
+  when: manual
+
+
+Deploy Dev:
+  extends: .deploy-base
+  tags:
+    - shell
+  environment:
+    name: development
+
+Deploy Staging:
+  extends: .deploy-base
+  tags:
+    - shell
+  environment:
+    name: staging
+
+Deploy Prod:
+  extends: .deploy-base
+  tags:
+    - shell
+  environment:
+    name: prod
